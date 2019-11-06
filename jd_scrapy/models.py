@@ -1,6 +1,6 @@
 from peewee import *
 
-db = MySQLDatabase('python_spider', user='root', password='xinyuanchang', host="localhost", port=3306, charset='utf8')
+db = MySQLDatabase('python_spider', user='root', password='123456', host="localhost", port=3306, charset='utf8')
 
 
 class BaseModel(Model):
