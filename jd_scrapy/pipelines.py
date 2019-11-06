@@ -40,7 +40,7 @@ class JdScrapyPipeline(object):
 #     '''同步写入mysql'''
 #
 #     def __init__(self):
-#         self.conn = pymysql.connect('localhost', 'root', 'xinyuanchang', 'python_spider', 3306, charset='utf-8',
+#         self.conn = pymysql.connect('localhost', 'root', '123456', 'python_spider', 3306, charset='utf-8',
 #                                     user_unicode=True)
 #         self.cursor = self.conn.cursor()
 #
