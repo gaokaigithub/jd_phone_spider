@@ -9,11 +9,6 @@ from selenium.common.exceptions import NoSuchElementException
 
 from jd_scrapy.items import *
 
-
-# from jd_scrapy.jd_scrapy.items import BrandItem, GoodReviewsTagItem, GoodItem
-# from jd_scrapy.jd_scrapy.items import BrandItem
-
-
 class JdPhonesSpider(scrapy.Spider, ABC):
     name = 'jd_phones'
     allowed_domains = ['jd.com']
@@ -29,42 +24,37 @@ class JdPhonesSpider(scrapy.Spider, ABC):
 
     def parse_brand(self, response):
         brand_list = response.xpath('//ul[@id="brandsArea"]//li/a')
-        for b in brand_list:
-            brand_url = parse.urljoin(self.domain, b.xpath('./@href').extract()[0])
-            b_id = b.xpath('../@id').extract()[0].strip()
-            name = b.xpath('./@title').extract()[0].strip()
-            # brand_url_linshi = 'https://list.jd.com/list.html?cat=9987,653,655&ev=exbrand_8557&sort=sort_rank_asc&trans=1&JL=6_0_0#J_main'
-            yield Request(url=brand_url, callback=self.parse_phone_list, meta={'b': b_id, 'n': name})
+        for brand in brand_list:
+            brand_url = parse.urljoin(self.domain, brand.xpath('./@href').get())
+            brand_id = brand.xpath('../@id').get().strip()
+            name = brand.xpath('./@title').get().strip()
+            yield Request(url=brand_url, callback=self.parse_phone_list, meta={'brand_id': brand_id, 'name': name})
 
     def parse_phone_list(self, response):
-        brand = BrandItem(b_id=response.meta['b'], name=response.meta['n'])
-        
-        brand['phone_nums'] = int(
-            response.xpath('//div[@id="J_selector"]//div[@class="st-ext"]/span/text()').extract()[0])
+        brand = BrandItem(b_id=response.meta['brand_id'], name=response.meta['name'])
+        brand['phone_nums'] = int(response.xpath('//div[@id="J_selector"]//div[@class="st-ext"]/span/text()').get())
         yield brand
-        phone_hrefs = response.xpath(
-            '//div[@id="plist"]//div[@class ="gl-i-wrap j-sku-item"]//div[contains(@class,"p-name")]/a/@href').extract()
+        
+        phone_hrefs = response.xpath('//div[@id="plist"]//div[@class ="gl-i-wrap j-sku-item"]//div[contains(@class,"p-name")]/a/@href').getall()
         for href in phone_hrefs:
             url = parse.urljoin('https://', href)
-            yield Request(url=url, callback=lambda response, it=response.meta['b']: self.parse_good(response, it),
-                          dont_filter=True)
-        next_page = response.xpath('//a[@class="pn-next"]/@href').extract()
-        if next_page:
-            next_page_href = next_page[0]
-            next_page_url = parse.urljoin('https://list.jd.com', next_page_href)
-            yield Request(url=next_page_url, callback=lambda response, it=response.meta['b']: self.parse_phone_list_2(response, it), dont_filter=True)
+            yield Request(url=url, callback=self.parse_good, meta={'brand_id':response.meta['brand_id']}, dont_filter=True)
 
-    def parse_phone_list_2(self, response, b_id):
-        phone_hrefs = response.xpath(
-            '//div[@id="plist"]//div[@class ="gl-i-wrap j-sku-item"]//div[contains(@class,"p-name")]/a/@href').extract()
+        next_page_href = response.xpath('//a[@class="pn-next"]/@href').get()
+        if next_page_href:
+            next_page_url = parse.urljoin('https://list.jd.com', next_page_href)
+            yield Request(url=next_page_url, callback=self.parse_phone_list_2, meta={'brand_id':response.meta['brand_id']}, dont_filter=True)
+            
+    def parse_phone_list_2(self, response):
+        phone_hrefs = response.xpath('//div[@id="plist"]//div[@class ="gl-i-wrap j-sku-item"]//div[contains(@class,"p-name")]/a/@href').getall()
         for href in phone_hrefs:
             url = parse.urljoin('https://', href)
-            yield Request(url=url, callback=lambda response, it=b_id: self.parse_good(response, it), dont_filter=True)
-        next_page = response.xpath('//a[@class="pn-next"]/@href').extract()
-        if next_page:
-            next_page_href = next_page[0]
+            yield Request(url=url, callback=self.parse_good, meta={response.meta['brand_id']}, dont_filter=True)
+
+        next_page_href = response.xpath('//a[@class="pn-next"]/@href').get()
+        if next_page_href:
             next_page_url = parse.urljoin('https://list.jd.com', next_page_href)
-            yield Request(url=next_page_url, callback=lambda response, it=response.meta['b']: self.parse_phone_list_2(response, it), dont_filter=True)
+            yield Request(url=next_page_url, callback=self.parse_phone_list_2, meta={'brand_id':response.meta['brand_id']}, dont_filter=True)
 
     def process_value(self, num_str):
         '''
@@ -83,22 +73,14 @@ class JdPhonesSpider(scrapy.Spider, ABC):
         url = response.url
         good_id = int(re.search(r'.*/(\d+).html', url).group(1))
 
-        name = "".join(response.xpath('//div[@class="sku-name"]/text()').extract()).strip()
-        try:
-            price = float(response.xpath('//span[@class="price J-p-{}"]/text()'.format(good_id)).extract()[0])
-        except IndexError:
-            price = 0.0
-        # image_list = json.dumps(response.xpath('//div[@id="spec-list"]/ul').extract())
-        try:
-            colors = ','.join(response.xpath(
-                '//div[@id="choose-attrs"]//div[@data-type="颜色"]//div[contains(@class,"item")]/@title').extract())
-        except Exception as e:
-            colors = ""
-        try:
-            memories = ','.join(response.xpath(
-                '//div[@id="choose-attrs"]//div[@data-type="版本"]//div[contains(@class,"item")]/@title').extract())
-        except Exception as e:
-            memories = ""
+        names = response.xpath('//div[@class="sku-name"]/text()').getall()
+        name = "".join([n.strip() for n in names])
+        price = float(response.xpath(f'//span[@class="price J-p-{good_id}"]/text()').get(default=0))
+        # 手机颜色和内存
+        colors_list = response.xpath('//div[@id="choose-attrs"]//div[@data-type="颜色"]//div[contains(@class,"item")]/@title').getall()
+        colors = ", ".join(colors_list)
+        memory_list = response.xpath('//div[@id="choose-attrs"]//div[@data-type="版本"]//div[contains(@class,"item")]/@title').getall()
+        memories = ','.join(memory_list)
 
         good['id'] = good_id
         good['name'] = name
@@ -111,50 +93,32 @@ class JdPhonesSpider(scrapy.Spider, ABC):
         reviews_sel = response.xpath(
             '//div[@id="detail"]//li[contains(@clstag,"shangpin|keycount|product|shangpinpingjia")]')
 
-        comment_percent_info = reviews_sel.xpath(
-            '//div[@class="comment-percent"]/div[@class="percent-con"]/text()').extract()
-        if comment_percent_info:
-            comment_percent_str = comment_percent_info[0]
-            comment_percent = int(re.search('(\d+)', comment_percent_str).group(1))
-        else:
-            comment_percent = 100
+        comment_percent_str = reviews_sel.xpath('//div[@class="comment-percent"]/div[@class="percent-con"]/text()').get(default='100')
+        comment_percent = int(re.search('(\d+)', comment_percent_str).group(1))
 
-        com_filter_list = reviews_sel.xpath(
-            '//div[@class="J-comments-list comments-list ETab"]/div[@class="tab-main small"]')
+        # 商品评价列表
+        com_filter_list = reviews_sel.xpath('//div[@class="J-comments-list comments-list ETab"]/div[@class="tab-main small"]')
 
-        image_comment_nums = 0
-        video_comment_nums = 0
-        added_comment_nums = 0
-        positive_comment_nums = 0
-        middle_comment_nums = 0
-        negative_comment_nums = 0
-        comment_nums_str = \
-        com_filter_list.xpath('./ul/li[@clstag="shangpin|keycount|product|allpingjia"]/@data-num').extract()[0]
+        comment_nums_str = com_filter_list.xpath('./ul/li[@clstag="shangpin|keycount|product|allpingjia"]/@data-num').get(default='0')
         comment_nums = self.process_value(comment_nums_str)
-        if comment_nums > 0:
-            image_comment_nums_str = \
-            com_filter_list.xpath('./ul/li[@clstag="shangpin|keycount|product|shaidantab"]/@data-num').extract()[0]
-            image_comment_nums = self.process_value(image_comment_nums_str)
 
-            video_comment_nums_str = \
-            com_filter_list.xpath('./ul/li[@clstag="shangpin|keycount|product|pingjiashipin"]/@data-num').extract()[0]
-            video_comment_nums = self.process_value(video_comment_nums_str)
+        image_comment_nums_str = com_filter_list.xpath('./ul/li[@clstag="shangpin|keycount|product|shaidantab"]/@data-num').get(default='0')
+        image_comment_nums = self.process_value(image_comment_nums_str)
 
-            added_comment_nums_str = \
-            com_filter_list.xpath('./ul/li[@clstag="shangpin|keycount|product|zhuiping"]/@data-num').extract()[0]
-            added_comment_nums = self.process_value(added_comment_nums_str)
+        video_comment_nums_str = com_filter_list.xpath('./ul/li[@clstag="shangpin|keycount|product|pingjiashipin"]/@data-num').get(default='0')
+        video_comment_nums = self.process_value(video_comment_nums_str)
 
-            positive_comment_nums_str = \
-            com_filter_list.xpath('./ul/li[@clstag="shangpin|keycount|product|haoping"]/@data-num').extract()[0]
-            positive_comment_nums = self.process_value(positive_comment_nums_str)
+        added_comment_nums_str = com_filter_list.xpath('./ul/li[@clstag="shangpin|keycount|product|zhuiping"]/@data-num').get(default='0')
+        added_comment_nums = self.process_value(added_comment_nums_str)
 
-            middle_comment_nums_str = \
-            com_filter_list.xpath('./ul/li[@clstag="shangpin|keycount|product|zhongping"]/@data-num').extract()[0]
-            middle_comment_nums = self.process_value(middle_comment_nums_str)
+        positive_comment_nums_str = com_filter_list.xpath('./ul/li[@clstag="shangpin|keycount|product|haoping"]/@data-num').get(default='0')
+        positive_comment_nums = self.process_value(positive_comment_nums_str)
 
-            negative_comment_nums_str = \
-            com_filter_list.xpath('./ul/li[@clstag="shangpin|keycount|product|chaping"]/@data-num').extract()[0]
-            negative_comment_nums = self.process_value(negative_comment_nums_str)
+        middle_comment_nums_str = com_filter_list.xpath('./ul/li[@clstag="shangpin|keycount|product|zhongping"]/@data-num').get(default='0')
+        middle_comment_nums = self.process_value(middle_comment_nums_str)
+
+        negative_comment_nums_str = com_filter_list.xpath('./ul/li[@clstag="shangpin|keycount|product|chaping"]/@data-num').get(default='0')
+        negative_comment_nums = self.process_value(negative_comment_nums_str)
 
         good['comment_percent'] = comment_percent
         good['comment_nums'] = comment_nums
@@ -173,21 +137,16 @@ class JdPhonesSpider(scrapy.Spider, ABC):
         tags_list = reviews_sel.xpath('//div[@clstag="shangpin|keycount|product|comment_icon"]/span')
         if tags_list:
             for tag_sel in tags_list:
-                tag_id = tag_sel.xpath('./@data-id').extract()[0]
-                tag_str = tag_sel.xpath('./text()').extract()[0]
-                tag = re.search(r"(.+)\((\d+)\)", tag_str).group(1)
+                tag_id = tag_sel.xpath('./@data-id').get()
+                tag_str = tag_sel.xpath('./text()').get()
+                tag_name = re.search(r"(.+)\((\d+)\)", tag_str).group(1)
                 tag_num = int(re.search(r"(.+)\((\d+)\)", tag_str).group(2))
-                good_reviews_tag['id'] = tag_id
-                good_reviews_tag['tag'] = tag
-                good_reviews_tag['tag_num'] = tag_num
-
-                yield good_reviews_tag
         else:
             tag_id = str(good_id)+"  no_tag"
-            tag = ""
+            tag_name = ""
             tag_num = 0
-            good_reviews_tag['id'] = tag_id
-            good_reviews_tag['tag'] = tag
-            good_reviews_tag['tag_num'] = tag_num
 
-            yield good_reviews_tag
+        good_reviews_tag['id'] = tag_id
+        good_reviews_tag['tag'] = tag_name
+        good_reviews_tag['tag_num'] = tag_num
+        yield good_reviews_tag
